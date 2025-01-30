@@ -1,0 +1,258 @@
+from customtkinter import *
+from PIL import Image, ImageTk
+from tkinter.filedialog import askopenfilename
+import cv2
+import numpy as np
+
+# Configuración de la ventana principal
+app = CTk()
+app.geometry("800x600")
+set_appearance_mode("dark")
+set_default_color_theme("dark-blue")
+
+# Variables globales
+filas = [3]
+columnas = [2]
+cuadricula = []  # Matriz para mantener las imágenes organizadas por fila y columna
+imagenes_procesadas = []  # Lista para almacenar las imágenes procesadas
+imagen_seleccionada = [None]
+imagen_para_intercambio = [None]
+
+
+def limpiar_ventana():
+    """Limpia la ventana principal."""
+    for widget in app.winfo_children():
+        widget.destroy()
+
+
+def inicializar_cuadricula():
+    """Inicializa la cuadrícula con posiciones vacías."""
+    global cuadricula
+    cuadricula = [[None for _ in range(columnas[0])] for _ in range(filas[0])]
+
+def detectar_bordes_optimos(img):
+    """Detecta bordes en una imagen con Canny usando umbrales adaptativos y reducción de ruido."""
+    if len(img.shape) == 3:
+        img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+
+    img_suavizada = cv2.GaussianBlur(img, (5, 5), 0)
+    mediana = np.median(img_suavizada)
+    umbral_bajo = int(max(0, 0.66 * mediana))
+    umbral_alto = int(min(255, 1.33 * mediana))
+
+    bordes = cv2.Canny(img_suavizada, umbral_bajo, umbral_alto)
+    return bordes
+
+def cargar_imagen():
+    """Permite al usuario cargar una imagen y colocarla en la primera posición vacía de la cuadrícula."""
+    global cuadricula
+
+    # Buscar la primera posición vacía en la cuadrícula
+    for i in range(filas[0]):
+        for j in range(columnas[0]):
+            if cuadricula[i][j] is None:
+                archivo = askopenfilename(filetypes=[("Archivos de imagen", "*.jpg;*.jpeg;*.png")])
+                if archivo:
+                    img = cv2.imread(archivo)
+                    if img is not None:
+                        cuadricula[i][j] = img
+                        mostrar_cuadricula()
+                return
+
+    indicador_seleccion.configure(text="Cuadrícula llena", text_color="red")
+
+
+def mostrar_cuadricula():
+    """Muestra las imágenes actuales de la cuadrícula en la interfaz."""
+    limpiar_panel()
+
+    for i in range(filas[0]):
+        for j in range(columnas[0]):
+            if cuadricula[i][j] is not None:
+                # Mostrar la imagen en la posición correspondiente
+                img_rgb = cv2.cvtColor(cuadricula[i][j], cv2.COLOR_BGR2RGB)
+                img_pil = Image.fromarray(img_rgb).resize((200, 200))
+                ctk_img = CTkImage(light_image=img_pil, size=(200, 200))
+
+                img_frame = CTkFrame(master=panel_imagenes, fg_color="white", corner_radius=10, width=220, height=220)
+                img_frame.grid(row=i, column=j, padx=10, pady=10)
+
+                img_label = CTkLabel(master=img_frame, image=ctk_img)
+                img_label.image = ctk_img
+                img_label.pack(padx=10, pady=10)
+
+                # Asociar eventos
+                img_frame.bind("<Button-1>", lambda event, x=i, y=j: seleccionar_imagen(x, y))
+                img_label.bind("<Button-1>", lambda event, x=i, y=j: seleccionar_imagen(x, y))
+def seleccionar_imagen(i, j):
+    """Selecciona una imagen de la cuadrícula."""
+    global imagen_seleccionada, imagen_para_intercambio
+    if imagen_seleccionada[0] is None:
+        imagen_seleccionada[0] = (i, j)
+        indicador_seleccion.configure(text=f"Imagen seleccionada: ({i}, {j})", text_color="green")
+    elif imagen_para_intercambio[0] is None and (i, j) != imagen_seleccionada[0]:
+        imagen_para_intercambio[0] = (i, j)
+        indicador_seleccion.configure(text=f"Listo para intercambiar imágenes", text_color="green")
+def intercambiar_imagenes():
+    """Intercambia dos imágenes seleccionadas en la cuadrícula."""
+    global cuadricula, imagen_seleccionada, imagen_para_intercambio
+    if imagen_seleccionada[0] and imagen_para_intercambio[0]:
+        i1, j1 = imagen_seleccionada[0]
+        i2, j2 = imagen_para_intercambio[0]
+
+        # Intercambiar las imágenes en la cuadrícula
+        cuadricula[i1][j1], cuadricula[i2][j2] = cuadricula[i2][j2], cuadricula[i1][j1]
+
+        # Resetear selección
+        imagen_seleccionada[0] = None
+        imagen_para_intercambio[0] = None
+
+        indicador_seleccion.configure(text="Imágenes intercambiadas", text_color="blue")
+        mostrar_cuadricula()
+
+
+def eliminar_imagen():
+    """Elimina una imagen seleccionada de la cuadrícula."""
+    global cuadricula, imagen_seleccionada
+    if imagen_seleccionada[0]:
+        i, j = imagen_seleccionada[0]
+        cuadricula[i][j] = None
+        imagen_seleccionada[0] = None
+
+        indicador_seleccion.configure(text="Imagen eliminada", text_color="red")
+        mostrar_cuadricula()
+        
+        
+def procesar_imagenes():
+    """Procesa todas las imágenes de la cuadrícula aplicando detección de bordes optimizada."""
+    global cuadricula, imagenes_procesadas
+    imagenes_procesadas.clear()
+
+    for i in range(filas[0]):
+        for j in range(columnas[0]):
+            if cuadricula[i][j] is not None:
+                # Aplicar detección de bordes optimizada con umbral automático
+                img = cuadricula[i][j]
+                bordes = detectar_bordes_optimos(img)
+
+                # Superponer bordes en la imagen original
+                img_superpuesta = img.copy()
+                img_superpuesta[bordes != 0] = (0, 255, 0)  # Resaltar bordes en verde
+                
+                imagenes_procesadas.append((i, j, img_superpuesta))
+
+    mostrar_resultados()
+
+
+
+def mostrar_resultados():
+    """Muestra las imágenes procesadas en la cuadrícula."""
+    limpiar_ventana()
+
+    etiqueta = CTkLabel(master=app, text="Imágenes Procesadas", font=("Arial", 20))
+    etiqueta.pack(pady=20)
+
+    panel_resultados = CTkFrame(master=app, width=700, height=400, fg_color="white")
+    panel_resultados.pack(pady=10)
+
+    for i, j, img in imagenes_procesadas:
+        img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+        img_pil = Image.fromarray(img_rgb).resize((200, 200))
+        ctk_img = CTkImage(light_image=img_pil, size=(200, 200))
+
+        img_frame = CTkFrame(master=panel_resultados, fg_color="white", corner_radius=10, width=220, height=220)
+        img_frame.grid(row=i, column=j, padx=10, pady=10)
+
+        img_label = CTkLabel(master=img_frame, image=ctk_img)
+        img_label.image = ctk_img
+        img_label.pack(padx=10, pady=10)
+
+
+def limpiar_panel():
+    """Limpia el panel de imágenes."""
+    for widget in panel_imagenes.winfo_children():
+        widget.destroy()
+        
+def volver_al_menu():
+    """Regresa a la pantalla de configuración de dimensiones."""
+    configurar_dimensiones()
+
+def configurar_cuadricula():
+    """Configura la cuadrícula inicial después de seleccionar dimensiones."""
+    global panel_imagenes
+    limpiar_ventana()
+
+    encabezado = CTkLabel(master=app, text="Configura la Cuadrícula", font=("Arial", 20))
+    encabezado.pack(pady=20)
+
+    panel_imagenes = CTkFrame(master=app, width=700, height=400, fg_color="white")
+    panel_imagenes.pack(pady=10)
+
+    botones = CTkFrame(master=app)
+    botones.pack(pady=10)
+
+    boton_cargar = CTkButton(master=botones, text="Cargar Imagen", command=cargar_imagen, corner_radius=10)
+    boton_cargar.grid(row=0, column=0, padx=10)
+
+    boton_eliminar = CTkButton(master=botones, text="Eliminar Imagen", command=eliminar_imagen, corner_radius=10)
+    boton_eliminar.grid(row=0, column=1, padx=10)
+    
+    boton_volver = CTkButton(master=botones, text="Volver al Menú", command=volver_al_menu, corner_radius=10)
+    boton_volver.grid(row=0, column=4, padx=10)
+
+    boton_intercambiar = CTkButton(master=botones, text="Intercambiar", command=intercambiar_imagenes, corner_radius=10)
+    boton_intercambiar.grid(row=0, column=2, padx=10)
+
+    boton_procesar = CTkButton(master=botones, text="Procesar Imágenes", command=procesar_imagenes, corner_radius=10)
+    boton_procesar.grid(row=0, column=3, padx=10)
+
+    global indicador_seleccion
+    indicador_seleccion = CTkLabel(master=app, text="No hay imágenes seleccionadas", font=("Arial", 12), text_color="gray")
+    indicador_seleccion.pack(pady=10)
+
+
+def configurar_dimensiones():
+    """Pantalla inicial para configurar las dimensiones de la cuadrícula."""
+    limpiar_ventana()
+
+    # Encabezado
+    encabezado = CTkFrame(master=app, height=80, fg_color="#4158D0")
+    encabezado.pack(fill="x")
+
+    titulo = CTkLabel(master=encabezado, text="SkyMapper", font=("Arial", 30, "bold"), text_color="white")
+    titulo.place(relx=0.5, rely=0.5, anchor="center")
+
+    # Contenido principal
+    contenido = CTkFrame(master=app, fg_color=None)
+    contenido.pack(pady=20, expand=True, fill="both")
+
+    etiqueta = CTkLabel(
+        master=contenido,
+        text="Selecciona el tamaño de la cuadrícula para la superimagen:",
+        font=("Arial", 16),
+    )
+    etiqueta.pack(pady=20)
+
+    opciones = ["2x2", "3x2", "3x3", "4x3", "5x4"]
+
+    def cambiar_tamano(opcion):
+        f, c = map(int, opcion.split('x'))
+        filas[0] = f
+        columnas[0] = c
+        inicializar_cuadricula()
+        configurar_cuadricula()
+
+    menu_tamano = CTkOptionMenu(master=contenido, values=opciones, command=cambiar_tamano)
+    menu_tamano.pack(pady=10)
+
+    boton_iniciar = CTkButton(master=contenido, text="Iniciar", command=lambda: configurar_cuadricula(), corner_radius=20)
+    boton_iniciar.pack(pady=40)
+
+    # Pie de página
+    pie = CTkLabel(master=app, text="© 2025 PanoraDrone. Todos los derechos reservados.", font=("Arial", 10), text_color="gray")
+    pie.pack(side="bottom", pady=10)
+
+
+inicializar_cuadricula()
+configurar_dimensiones()
+app.mainloop()
